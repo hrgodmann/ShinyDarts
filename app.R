@@ -1,8 +1,5 @@
-# SHINY APP FOR PLAYING 501 DARTS WITH GAME ANALYTICS
-
-
-
 library(shiny)
+library(ggplot2)
 
 # DEFINE USER INTERFACE ------------------------------------------------------#
 ui <- fluidPage(
@@ -90,7 +87,9 @@ ui <- fluidPage(
                column(3, h3("Average Score"))
              ),
              hr(),
-             uiOutput("analytics_table")
+             uiOutput("analytics_table"),
+             hr(),
+             plotOutput("time_series_plot") # Add plot output for time series
     )
   )
 )
@@ -105,9 +104,10 @@ server <- function(input, output, session) {
     current_turn = 1,
     num_players = 2,
     player_names = NULL,
-    winner = NULL,  #  store  winner's name
-    throw_counts = NULL,  #  store  number of throws per player
-    throw_sums = NULL  #  store  sum of all throws per player 
+    winner = NULL,  # store winner's name
+    throw_counts = NULL,  # store number of throws per player
+    throw_sums = NULL,  # store sum of all throws per player 
+    time_series = vector("list", 10)  # Assuming a max of 10 players
   )
   
   # Generate input fields for player names
@@ -119,7 +119,7 @@ server <- function(input, output, session) {
     do.call(tagList, name_inputs)
   })
   
-  # Update  number of players and initialize scores, names, and throw counters
+  # Update number of players and initialize scores, names, and throw counters
   observeEvent(input$start_game, {
     game_state$num_players <- input$num_players
     game_state$scores <- rep(501, game_state$num_players)
@@ -127,9 +127,12 @@ server <- function(input, output, session) {
     game_state$player_names <- sapply(1:game_state$num_players, function(i) {
       input[[paste0("player_name_", i)]]
     })
-    game_state$winner <- NULL  # Resetwinner when  game starts
+    game_state$winner <- NULL  # Reset winner when game starts
     game_state$throw_counts <- rep(0, game_state$num_players)  # Initialize throw counts
     game_state$throw_sums <- rep(0, game_state$num_players)  # Initialize throw sums
+    game_state$time_series <- lapply(1:game_state$num_players, function(i) {
+      data.frame(round = integer(), score = integer())
+    })  # Initialize time series data
   })
   
   # Display scores for each player
@@ -163,14 +166,14 @@ server <- function(input, output, session) {
     }
   })
   
-  # Display  winner message
+  # Display winner message
   output$winner_message <- renderUI({
     if (!is.null(game_state$winner)) {
       h1(paste(game_state$winner, "wins!"), style = "color: #ff1493; text-align: center;")
     }
   })
   
-  # Update  score for the current player and check for a winner
+  # Update score for the current player and check for a winner
   observeEvent(input$enter_score, {
     if (!is.null(game_state$scores) && is.null(game_state$winner)) {
       current_score <- game_state$scores[game_state$current_turn]
@@ -182,19 +185,24 @@ server <- function(input, output, session) {
         game_state$scores[game_state$current_turn] <- new_score
         game_state$throw_counts[game_state$current_turn] <- game_state$throw_counts[game_state$current_turn] + 1
         game_state$throw_sums[game_state$current_turn] <- game_state$throw_sums[game_state$current_turn] + throw_value
+        
+        # Update time series data
+        ts_data <- game_state$time_series[[game_state$current_turn]]
+        new_round <- nrow(ts_data) + 1
+        game_state$time_series[[game_state$current_turn]] <- rbind(ts_data, data.frame(round = new_round, score = new_score))
       }
       
-      # Check if  current player has won
+      # Check if current player has won
       if (game_state$scores[game_state$current_turn] == 0) {
         game_state$winner <- game_state$player_names[game_state$current_turn]
       } else {
-        # Move to  next player's turn
+        # Move to next player's turn
         game_state$current_turn <- ifelse(game_state$current_turn %% game_state$num_players == 0, 1, game_state$current_turn + 1)
       }
     }
   })
   
-  # Generate analytics table 
+  # Generate analytics table
   output$analytics_table <- renderUI({
     if (is.null(game_state$scores)) return(NULL)
     
@@ -211,6 +219,25 @@ server <- function(input, output, session) {
       )
     })
     do.call(tagList, analytics_ui)
+  })
+  
+  # Render time series plot
+  output$time_series_plot <- renderPlot({
+    if (is.null(game_state$time_series) || length(game_state$time_series) == 0) return(NULL)
+    
+    ts_data_list <- game_state$time_series
+    plot_list <- lapply(1:game_state$num_players, function(i) {
+      ts_data <- ts_data_list[[i]]
+      ggplot(ts_data, aes(x = round, y = score)) +
+        geom_line() +
+        geom_point() +
+        ggtitle(paste("Player", i, "-", game_state$player_names[i])) +
+        labs(x = "Round", y = "Score") +
+        theme_minimal()
+    })
+    
+    # Combine plots into a single plot grid
+    do.call(gridExtra::grid.arrange, c(plot_list, ncol = 1))
   })
 }
 
